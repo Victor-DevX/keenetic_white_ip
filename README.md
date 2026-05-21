@@ -24,12 +24,51 @@
 ---
 ## Требования
 - роутер Keenetic с USB и обязательной поддержкой Entware
-- `ndmcli`
 - PPPoE-подключение провайдера (если стоит провайдерский роутер, то нужно его перевести в bridge)
 
+
+## Необходимые компоненты
+Перед установкой убедитесь, что на роутере установлены:
+- Entware
+- wget или curl
+
+Проверить наличие можно командами:
+```sh
+which wget
+which curl
+```
+
+Если `wget` отсутствует:
+```sh
+opkg install wget
+```
+
+Если `curl` отсутствует:
+```sh
+opkg install curl
+```
+
 ---
-## Установка
-Скопировать скрипт:
+## Установка через wget
+
+```sh
+wget -O /opt/bin/pppoe_reconnect.sh \
+https://raw.githubusercontent.com/Victor-DevX/keenetic_white_ip/refs/heads/main/pppoe_reconnect.sh && \
+chmod +x /opt/bin/pppoe_reconnect.sh
+```
+
+---
+## Установка через curl
+
+```sh
+curl -o /opt/bin/pppoe_reconnect.sh \
+https://raw.githubusercontent.com/Victor-DevX/keenetic_white_ip/refs/heads/main/pppoe_reconnect.sh && \
+chmod +x /opt/bin/pppoe_reconnect.sh
+```
+
+---
+## Установка вручную
+Скачать и скопировать скрипт по пути:
 ```sh
 /opt/etc/ndm/wan.d/pppoe_reconnect.sh
 ```
