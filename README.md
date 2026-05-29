@@ -52,18 +52,18 @@ opkg install curl
 ## Установка через wget
 
 ```sh
-wget -O /opt/bin/pppoe_reconnect.sh \
+wget -O /opt/etc/ndm/wan.d/pppoe_reconnect.sh \
 https://raw.githubusercontent.com/Victor-DevX/keenetic_white_ip/refs/heads/main/pppoe_reconnect.sh && \
-chmod +x /opt/bin/pppoe_reconnect.sh
+chmod +x /opt/etc/ndm/wan.d/pppoe_reconnect.sh
 ```
 
 ---
 ## Установка через curl
 
 ```sh
-curl -o /opt/bin/pppoe_reconnect.sh \
+curl -o /opt/etc/ndm/wan.d/pppoe_reconnect.sh \
 https://raw.githubusercontent.com/Victor-DevX/keenetic_white_ip/refs/heads/main/pppoe_reconnect.sh && \
-chmod +x /opt/bin/pppoe_reconnect.sh
+chmod +x /opt/etc/ndm/wan.d/pppoe_reconnect.sh
 ```
 
 ---
