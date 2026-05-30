@@ -23,9 +23,9 @@ trap 'rm -f "$lockfile"' EXIT
 # Логируем параметры hook
 echo "$(date) Interface=$interface Address=$address Gateway=$gateway" >> "$log"
 
-# ПРОПУСК ПРИ ЗАГРУЗКЕ: Ждем 3 минуты (180 сек), чтобы дать подняться VPN и синхронизировать время
+# ПРОПУСК ПРИ ЗАГРУЗКЕ: Ждем ~1.5 минуты (90 сек), чтобы дать подняться VPN и синхронизировать время
 uptime_sec=$(cat /proc/uptime | awk '{print $1}' | cut -d. -f1)
-if [ "$uptime_sec" -lt 180 ]; then
+if [ "$uptime_sec" -lt 90 ]; then
     echo "$(date) System is booting (Uptime: ${uptime_sec}s). Skipping reconnect." >> "$log"
     exit 0
 fi
