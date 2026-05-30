@@ -12,7 +12,6 @@ lockfile="/tmp/pppoe_reconnect.lock"
 
 if [ -f "$lockfile" ]; then
     oldpid=$(cat "$lockfile")
-
     if kill -0 "$oldpid" 2>/dev/null; then
         exit 0
     fi
@@ -24,6 +23,13 @@ trap 'rm -f "$lockfile"' EXIT
 # Логируем параметры hook
 echo "$(date) Interface=$interface Address=$address Gateway=$gateway" >> "$log"
 
+# ПРОПУСК ПРИ ЗАГРУЗКЕ: Ждем 3 минуты (180 сек), чтобы дать подняться VPN и синхронизировать время
+uptime_sec=$(cat /proc/uptime | awk '{print $1}' | cut -d. -f1)
+if [ "$uptime_sec" -lt 180 ]; then
+    echo "$(date) System is booting (Uptime: ${uptime_sec}s). Skipping reconnect." >> "$log"
+    exit 0
+fi
+
 # Получаем IP PPPoE
 current_ip=$(ip addr show ppp0 | awk '/inet / {print $2}' | cut -d/ -f1)
 
@@ -32,7 +38,7 @@ current_ip=$(ip addr show ppp0 | awk '/inet / {print $2}' | cut -d/ -f1)
 
 echo "$(date) Current IP=$current_ip" >> "$log"
 
-# Проверка на серый IP
+# Проверка на серый IP (CGNAT диапазоны)
 if echo "$current_ip" | grep -qE "^(10\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|172\.(1[6-9]|2[0-9]|3[01])\.)"; then
 
     echo "$(date) Grey IP detected" >> "$log"
@@ -52,22 +58,17 @@ if echo "$current_ip" | grep -qE "^(10\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0
 
     echo "$try_nr" > "$counter"
 
-    (
+    # Запускаем переподключение через надежный ndmq и nohup
+    nohup sh -c '
         sleep 20
-
-        echo "$(date) Reconnecting PPPoE..." >> "$log"
-
-        ndmcli connection PPPoE0 disconnect
+        echo "$(date) Reconnecting PPPoE..." >> /tmp/pppoe_guard.log
+        
+        ndmq -p "interface PPPoE0 down"
         sleep 5
-        ndmcli connection PPPoE0 connect
-
-        sleep 15
-
-        ndmcli service keenetic-cloud restart
-
-        echo "$(date) PPPoE reconnect complete" >> "$log"
-
-    ) >/dev/null 2>&1 &
+        ndmq -p "interface PPPoE0 up"
+        
+        echo "$(date) PPPoE reconnect complete" >> /tmp/pppoe_guard.log
+    ' >/dev/null 2>&1 &
 
 else
 
