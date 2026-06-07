@@ -1,3 +1,4 @@
+cat << 'EOF' > /opt/etc/ndm/wan.d/pppoe_reconnect.sh
 #!/opt/bin/sh
 
 # === Конфигурация ===
@@ -50,7 +51,7 @@ linux_iface=$(ip route | awk '/default/ {print $5}' | grep -o 'ppp[0-9]*' | head
 [ -z "$linux_iface" ] && linux_iface="ppp0" # Фолбэк на случай ошибки определения
 
 # 2. Ищем NDMS-имя PPPoE интерфейса для команд перезапуска
-ndms_iface=$(ndmcmd -c 'show interface' | grep -o 'PPPoE[0-9]*' | head -n 1)
+ndms_iface=$(ndmq -p 'show interface' | grep -o 'PPPoE[0-9]*' | head -n 1)
 [ -z "$ndms_iface" ] && ndms_iface="PPPoE0" # Фолбэк
 
 current_ip=$(ip addr show "$linux_iface" 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1)
@@ -80,9 +81,9 @@ if echo "$current_ip" | grep -qE "^(10\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0
         echo \$\$ > $lockfile
         
         sleep $delay
-        ndmcmd -c \"interface $ndms_iface down\"
+        ndmq -p \"interface $ndms_iface down\"
         sleep 5
-        ndmcmd -c \"interface $ndms_iface up\"
+        ndmq -p \"interface $ndms_iface up\"
         
         echo \"\$(date) [EXEC] Переподключение $ndms_iface выполнено (пауза ${delay} сек).\" >> $log
         
@@ -104,3 +105,4 @@ else
 fi
 
 exit 0
+EOF
