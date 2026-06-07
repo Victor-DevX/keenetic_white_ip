@@ -4,9 +4,9 @@
 log="/opt/var/log/pppoe_guard.log"
 lockfile="/tmp/pppoe_reconnect.lock"
 
-# ПУТИ ИСПРАВЛЕНЫ: Теперь файлы живут в оперативной памяти (/tmp/), USB-флешка не изнашивается
-previp="/tmp/previp.txt"
-counter="/tmp/CountReconnectWan.txt"
+# Файлы счетчиков и предыдущего IP хранятся на USB-накопителе
+previp="/opt/tmp/previp.txt"
+counter="/opt/tmp/CountReconnectWan.txt"
 
 max_tries=5
 max_log_size=25600 # Лимит лога: ~25 КБ
@@ -20,7 +20,7 @@ if [ -f "$log" ]; then
     fi
 fi
 
-# === 1. МГНОВЕННАЯ ЗАЩИТА ОТ ПАРАЛЛЕЛЬНОГО ЗАПУСКА ===
+# === 1. Защита от парралельного запуска ===
 if [ -f "$lockfile" ]; then
     oldpid=$(cat "$lockfile")
     if kill -0 "$oldpid" 2>/dev/null; then
@@ -44,7 +44,7 @@ fi
 # === 3. Стабилизация интерфейса ===
 sleep 10
 
-# === АВТООПРЕДЕЛЕНИЕ ИНТЕРФЕЙСОВ ===
+# === Автоопределенеи интерфейса PPPoE ===
 # 1. Ищем Linux-имя активного шлюза (тот ppp, через который сейчас идет интернет)
 linux_iface=$(ip route | awk '/default/ {print $5}' | grep -o 'ppp[0-9]*' | head -n 1)
 [ -z "$linux_iface" ] && linux_iface="ppp0" # Фолбэк на случай ошибки определения
