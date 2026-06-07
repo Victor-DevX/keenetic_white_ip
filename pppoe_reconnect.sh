@@ -1,4 +1,3 @@
-cat << 'EOF' > /opt/etc/ndm/wan.d/pppoe_reconnect.sh
 #!/opt/bin/sh
 
 # === Конфигурация ===
@@ -105,4 +104,3 @@ else
 fi
 
 exit 0
-EOF
