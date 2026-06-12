@@ -1,106 +1,163 @@
 #!/opt/bin/sh
 
-# === Конфигурация ===
-log="/opt/var/log/pppoe_guard.log"
-lockfile="/tmp/pppoe_reconnect.lock"
+# PPPoE White IP Guard
 
-# Файлы счетчиков и предыдущего IP хранятся на USB-накопителе
-previp="/opt/tmp/previp.txt"
-counter="/opt/tmp/CountReconnectWan.txt"
+PPP_INTERFACE="PPPoE0"
+
+# Сохраняем логи и счетчики на физическом накопителе (флешке)
+workdir="/opt/var/log/wh_ip"
+
+log="$workdir/reconnect.log"
+counter="$workdir/counter.txt"
+previp="$workdir/previp.txt"
+
+# Блокировку оставляем в RAM, так как после ребута она в любом случае не нужна
+lock="/opt/var/run/wh_ip_reconnect.lock"
 
 max_tries=5
-max_log_size=25600 # Лимит лога: ~25 КБ
+long_pause=300
+max_log_size=25600
 
-# === 0. Управление размером лога ===
+mkdir -p "$workdir"
+
+# Ротация лога
+
 if [ -f "$log" ]; then
-    log_size=$(wc -c < "$log" 2>/dev/null || echo 0)
+    log_size=$(stat -c%s "$log" 2>/dev/null || echo 0)
+
     if [ "$log_size" -gt "$max_log_size" ]; then
-        tail -n 100 "$log" > "${log}.tmp" && mv "${log}.tmp" "$log"
-        echo "$(date) [SYS] Лог обрезан." >> "$log"
+        tail -n 50 "$log" > "${log}.tmp"
+        mv "${log}.tmp" "$log"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [SYS] Log rotated" >> "$log"
     fi
 fi
 
-# === 1. Защита от парралельного запуска ===
-if [ -f "$lockfile" ]; then
-    oldpid=$(cat "$lockfile")
-    if kill -0 "$oldpid" 2>/dev/null; then
-        echo "$(date) [INFO] Скрипт уже запущен (PID: $oldpid). Блокировка дубликата." >> "$log"
-        exit 0
-    else
-        rm -f "$lockfile"
-    fi
-fi
+log_msg() {
+    printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$log"
+}
 
-echo $$ > "$lockfile"
-trap 'rm -f "$lockfile"' EXIT
 
-# === 2. Пропуск при загрузке роутера ===
-uptime_sec=$(cat /proc/uptime | awk '{print int($1)}')
-if [ "$uptime_sec" -lt 90 ]; then
-    echo "$(date) [SKIP] Система загружается (Uptime: ${uptime_sec}s)." >> "$log"
+# Фильтрация событий NDMS
+
+[ -n "$address" ] || exit 0
+
+# Отсекаем события от VPN и других интерфейсов
+if [ "$system_name" != "$PPP_INTERFACE" ]; then
     exit 0
 fi
 
-# === 3. Стабилизация интерфейса ===
-sleep 10
+log_msg "WAN event: interface=$interface system_name=$system_name ip=$address"
 
-# === Автоопределенеи интерфейса PPPoE ===
-# 1. Ищем Linux-имя активного шлюза (тот ppp, через который сейчас идет интернет)
-linux_iface=$(ip route | awk '/default/ {print $5}' | grep -o 'ppp[0-9]*' | head -n 1)
-[ -z "$linux_iface" ] && linux_iface="ppp0" # Фолбэк на случай ошибки определения
 
-# 2. Ищем NDMS-имя PPPoE интерфейса для команд перезапуска
-ndms_iface=$(ndmq -p 'show interface' | grep -o 'PPPoE[0-9]*' | head -n 1)
-[ -z "$ndms_iface" ] && ndms_iface="PPPoE0" # Фолбэк
+# Проверка CGNAT
 
-current_ip=$(ip addr show "$linux_iface" 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1)
-[ -z "$current_ip" ] && exit 0
+is_gray_ip() {
+    echo "$1" | grep -qE \
+    "^(10\.|100\.6[4-9]\.|100\.[7-9][0-9]\.|100\.1[01][0-9]\.|100\.12[0-7]\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[01]\.)"
+}
 
-# === 4. Главная логика проверки ===
-# Добавлена подсеть 192.168.x.x в проверку "серых" IP
-if echo "$current_ip" | grep -qE "^(10\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)"; then
-    
-    [ -f "$counter" ] || echo "0" > "$counter"
-    try_nr=$(cat "$counter")
-    try_nr=$((try_nr + 1))
-    
-    if [ "$try_nr" -ge "$max_tries" ]; then
-        delay=300
-        echo "0" > "$counter"
-        echo "$(date) [WARN] Попытка $try_nr. ЛИМИТ! Серый IP: $current_ip. Пауза 5 минут..." >> "$log"
-    else
-        delay=15
-        echo "$try_nr" > "$counter"
-        echo "$(date) [WARN] Попытка $try_nr из $max_tries. Серый IP: $current_ip. Реконнект через 15 сек..." >> "$log"
-    fi
-    
-    trap - EXIT
-    
-    nohup sh -c "
-        echo \$\$ > $lockfile
-        
-        sleep $delay
-        ndmq -p \"interface $ndms_iface down\"
+
+# Мягкий реконнект PPPoE
+
+soft_reconnect() {
+    delay="$1"
+
+    (
+        mkdir "$lock" 2>/dev/null || {
+            log_msg "Реконнект уже выполняется"
+            exit 0
+        }
+
+        trap 'rmdir "$lock" 2>/dev/null' EXIT
+
+        log_msg "Запланирован реконнект через ${delay}с"
+        sleep "$delay"
+
+        log_msg "PPPoE down"
+
+        if ndmc -c "interface $PPP_INTERFACE down"; then
+            log_msg "down OK"
+        else
+            log_msg "down FAILED"
+            exit 1
+        fi
+
         sleep 5
-        ndmq -p \"interface $ndms_iface up\"
-        
-        echo \"\$(date) [EXEC] Переподключение $ndms_iface выполнено (пауза ${delay} сек).\" >> $log
-        
-        rm -f $lockfile
-    " >/dev/null 2>&1 &
 
-else
+        log_msg "PPPoE up"
 
-    [ -f "$previp" ] || echo "0.0.0.0" > "$previp"
-    _previp=$(cat "$previp")
-    
-    if [ "$_previp" != "$current_ip" ]; then
-        echo "$(date) [OK] Получен белый IP: $current_ip на интерфейсе $ndms_iface." >> "$log"
-        echo "$current_ip" > "$previp"
+        if ndmc -c "interface $PPP_INTERFACE up"; then
+            log_msg "up OK"
+        else
+            log_msg "up FAILED"
+            exit 1
+        fi
+
+        log_msg "Реконнект завершён"
+    ) &
+}
+
+
+# Обработка серого IP
+
+if is_gray_ip "$address"; then
+
+    [ -f "$counter" ] || printf '0\n' > "$counter"
+
+    try_nr=$(cat "$counter" 2>/dev/null)
+    [ -n "$try_nr" ] || try_nr=0
+
+    try_nr=$((try_nr + 1))
+
+    log_msg "Обнаружен CGNAT IP: $address"
+    log_msg "Попытка $try_nr из $max_tries"
+
+    if [ "$try_nr" -ge "$max_tries" ]; then
+        log_msg "Достигнут лимит попыток. Ожидание ${long_pause}с"
+        printf '0\n' > "$counter"
+        soft_reconnect "$long_pause"
+        exit 0
     fi
-    
-    echo "0" > "$counter"
-    
+
+    printf '%s\n' "$try_nr" > "$counter"
+
+    # Случайная задержка 5-15 секунд
+    delay=$(( ($(date +%s) % 11) + 5 ))
+    soft_reconnect "$delay"
+
+    exit 0
+fi
+
+
+# Обработка белого IP
+
+log_msg "Получен белый IP: $address"
+
+printf '0\n' > "$counter"
+
+[ -f "$previp" ] || printf '0.0.0.0\n' > "$previp"
+
+old_ip=$(cat "$previp" 2>/dev/null)
+
+if [ "$old_ip" != "$address" ]; then
+    printf '%s\n' "$address" > "$previp"
+    log_msg "IP изменился: $old_ip -> $address"
+
+    log_msg "Обновление WEBADMIN"
+
+    if ndmc -c "ip http security-level public ssl"; then
+        log_msg "WEBADMIN OK"
+    else
+        log_msg "WEBADMIN FAILED"
+    fi
+
+    sleep 2
+
+    if ndmc -c "system configuration save"; then
+        log_msg "Configuration saved"
+    else
+        log_msg "Configuration save FAILED"
+    fi
 fi
 
 exit 0
