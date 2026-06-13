@@ -59,10 +59,7 @@ opkg install wget
 opkg install curl
 ```
 
-Если `nohup` отсутствует:
-```sh
-opkg install coreutils-nohup
-```
+
 
 ---
 ## Установка через wget
