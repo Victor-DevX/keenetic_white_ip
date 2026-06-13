@@ -1,4 +1,5 @@
 #!/opt/bin/sh
+export PATH="/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin:$PATH"
 
 # PPPoE White IP Guard
 
