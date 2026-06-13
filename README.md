@@ -65,43 +65,43 @@ opkg install curl
 ## Установка через wget
 
 ```sh
-wget -O /opt/etc/ndm/wan.d/pppoe_reconnect.sh \
-https://raw.githubusercontent.com/Victor-DevX/keenetic_white_ip/main/pppoe_reconnect.sh && \
-chmod +x /opt/etc/ndm/wan.d/pppoe_reconnect.sh
+wget -O /opt/etc/ndm/wan.d/pppoe_reconnect \
+https://raw.githubusercontent.com/Victor-DevX/keenetic_white_ip/main/pppoe_reconnect && \
+chmod +x /opt/etc/ndm/wan.d/pppoe_reconnect
 ```
 
 ---
 ## Установка через curl
 
 ```sh
-curl -o /opt/etc/ndm/wan.d/pppoe_reconnect.sh \
-https://raw.githubusercontent.com/Victor-DevX/keenetic_white_ip/main/pppoe_reconnect.sh && \
-chmod +x /opt/etc/ndm/wan.d/pppoe_reconnect.sh
+curl -o /opt/etc/ndm/wan.d/pppoe_reconnect \
+https://raw.githubusercontent.com/Victor-DevX/keenetic_white_ip/main/pppoe_reconnect && \
+chmod +x /opt/etc/ndm/wan.d/pppoe_reconnect
 ```
 
 ---
 ## Установка вручную
 Скачать и скопировать скрипт по пути:
 ```sh
-/opt/etc/ndm/wan.d/pppoe_reconnect.sh
+/opt/etc/ndm/wan.d/pppoe_reconnect
 ```
 
 Выдать права:
 ```sh
-chmod +x /opt/etc/ndm/wan.d/pppoe_reconnect.sh
+chmod +x /opt/etc/ndm/wan.d/pppoe_reconnect
 ```
 
 ---
 ## Запуск вручную
 ```sh
-/opt/etc/ndm/wan.d/pppoe_reconnect.sh
+/opt/etc/ndm/wan.d/pppoe_reconnect
 ```
 
 ---
 ## Ручная проверка (Отладка)
 Так как скрипт ожидает переменные от системы NDMS, простой запуск файла может ничего не дать (скрипт безопасно завершится если у Вас уже белый IP). Для эмуляции получения серого IP выполните в терминале команду:
 ```sh
-address="100.64.1.10" system_name="PPPoE0" sh /opt/etc/ndm/wan.d/pppoe_reconnect.sh
+address="100.64.1.10" system_name="PPPoE0" sh /opt/etc/ndm/wan.d/pppoe_reconnect
 ```
 
 ---
@@ -140,7 +140,7 @@ log="/dev/null"
 ---
 ## Удаление
 ```sh
-rm /opt/etc/ndm/wan.d/pppoe_reconnect.sh
+rm /opt/etc/ndm/wan.d/pppoe_reconnect
 rm -rf /opt/var/log/wh_ip/
 ```
 
