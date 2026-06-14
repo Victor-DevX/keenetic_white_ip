@@ -1,9 +1,12 @@
 #!/opt/bin/sh
 export PATH="/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin:$PATH"
 
-# PPPoE White IP Guard
+mkdir -p /opt/var/log/wh_ip
 
-PPP_INTERFACE="PPPoE0"
+
+# Интерфейс
+wan_interface="eth3"
+
 
 # Сохраняем логи и счетчики на физическом накопителе (флешке)
 workdir="/opt/var/log/wh_ip"
@@ -17,12 +20,11 @@ lock="/opt/var/run/wh_ip_reconnect.lock"
 
 max_tries=5
 long_pause=300
-max_log_size=25600
+max_log_size=10240  # Максимальный размер лога (10 КБ)
 
 mkdir -p "$workdir"
 
 # Ротация лога
-
 if [ -f "$log" ]; then
     log_size=$(stat -c%s "$log" 2>/dev/null || echo 0)
 
@@ -39,29 +41,33 @@ log_msg() {
 
 
 # Фильтрация событий NDMS
-
 [ -n "$address" ] || exit 0
 
 # Отсекаем события от VPN и других интерфейсов
-if [ "$system_name" != "$PPP_INTERFACE" ]; then
+if [ "$interface" != "ppp0" ]; then
     exit 0
 fi
 
-log_msg "WAN event: interface=$interface system_name=$system_name ip=$address"
+log_msg "Wan event detected: interface=$interface address=$address"
+
+
+# Если уже запущена длинная пауза после достижения лимита
+if [ -f "$counter" ] && [ "$(cat "$counter" 2>/dev/null)" = "PAUSE" ]; then
+    log_msg "Режим ожидания активен"
+    exit 0
+fi
 
 
 # Проверка CGNAT
-
 is_gray_ip() {
     echo "$1" | grep -qE \
     "^(10\.|100\.6[4-9]\.|100\.[7-9][0-9]\.|100\.1[01][0-9]\.|100\.12[0-7]\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[01]\.)"
 }
 
 
-# Мягкий реконнект PPPoE
-
+# Реконнект PPPoE
 soft_reconnect() {
-    delay="$1"
+delay="$1"
 
     (
         mkdir "$lock" 2>/dev/null || {
@@ -72,22 +78,29 @@ soft_reconnect() {
         trap 'rmdir "$lock" 2>/dev/null' EXIT
 
         log_msg "Запланирован реконнект через ${delay}с"
+
         sleep "$delay"
 
-        log_msg "PPPoE down"
+        # Если это была длинная пауза — разрешаем новые попытки
+        if [ "$delay" -eq "$long_pause" ]; then
+            printf '0\n' > "$counter"
+            log_msg "Режим ожидания завершён"
+        fi
 
-        if ndmc -c "interface $PPP_INTERFACE down"; then
+        log_msg "Wan down ($wan_interface)"
+
+        if ifconfig "$wan_interface" down; then
             log_msg "down OK"
         else
             log_msg "down FAILED"
             exit 1
         fi
 
-        sleep 5
+        sleep 2
 
-        log_msg "PPPoE up"
+        log_msg "Wan up ($wan_interface)"
 
-        if ndmc -c "interface $PPP_INTERFACE up"; then
+        if ifconfig "$wan_interface" up; then
             log_msg "up OK"
         else
             log_msg "up FAILED"
@@ -96,11 +109,11 @@ soft_reconnect() {
 
         log_msg "Реконнект завершён"
     ) &
+
 }
 
 
 # Обработка серого IP
-
 if is_gray_ip "$address"; then
 
     [ -f "$counter" ] || printf '0\n' > "$counter"
@@ -115,7 +128,9 @@ if is_gray_ip "$address"; then
 
     if [ "$try_nr" -ge "$max_tries" ]; then
         log_msg "Достигнут лимит попыток. Ожидание ${long_pause}с"
-        printf '0\n' > "$counter"
+
+        printf 'PAUSE\n' > "$counter"
+
         soft_reconnect "$long_pause"
         exit 0
     fi
@@ -131,7 +146,6 @@ fi
 
 
 # Обработка белого IP
-
 log_msg "Получен белый IP: $address"
 
 printf '0\n' > "$counter"
@@ -144,21 +158,6 @@ if [ "$old_ip" != "$address" ]; then
     printf '%s\n' "$address" > "$previp"
     log_msg "IP изменился: $old_ip -> $address"
 
-    log_msg "Обновление WEBADMIN"
-
-    if ndmc -c "ip http security-level public ssl"; then
-        log_msg "WEBADMIN OK"
-    else
-        log_msg "WEBADMIN FAILED"
-    fi
-
-    sleep 2
-
-    if ndmc -c "system configuration save"; then
-        log_msg "Configuration saved"
-    else
-        log_msg "Configuration save FAILED"
-    fi
 fi
 
 exit 0
