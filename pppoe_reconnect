@@ -1,163 +1,127 @@
 #!/opt/bin/sh
 export PATH="/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin:$PATH"
 
-mkdir -p /opt/var/log/wh_ip
-
-
-# Интерфейс
+# Физический интерфейс для перезапуска (как в исходнике)
 wan_interface="eth3"
 
-
-# Сохраняем логи и счетчики на физическом накопителе (флешке)
-workdir="/opt/var/log/wh_ip"
-
+# Хранение в RAM (/tmp) — 0% износа флеш-памяти
+workdir="/tmp/wh_ip"
 log="$workdir/reconnect.log"
-counter="$workdir/counter.txt"
-previp="$workdir/previp.txt"
+state_file="$workdir/state"
 
-# Блокировку оставляем в RAM, так как после ребута она в любом случае не нужна
-lock="/opt/var/run/wh_ip_reconnect.lock"
-
-max_tries=5
+max_tries=7
 long_pause=300
-max_log_size=10240  # Максимальный размер лога (10 КБ)
+max_log_size=10240
 
 mkdir -p "$workdir"
-
-# Ротация лога
-if [ -f "$log" ]; then
-    log_size=$(stat -c%s "$log" 2>/dev/null || echo 0)
-
-    if [ "$log_size" -gt "$max_log_size" ]; then
-        tail -n 50 "$log" > "${log}.tmp"
-        mv "${log}.tmp" "$log"
-        echo "$(date '+%Y-%m-%d %H:%M:%S') [SYS] Log rotated" >> "$log"
-    fi
-fi
 
 log_msg() {
     printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$log"
 }
 
+rotate_log() {
+    [ -f "$log" ] || return 0
+    local log_size
+    log_size=$(wc -c < "$log" 2>/dev/null)
 
-# Фильтрация событий NDMS
-[ -n "$address" ] || exit 0
+    case "$log_size" in
+        ''|*[!0-9]*) log_size=0 ;;
+    esac
 
-# Отсекаем события от VPN и других интерфейсов
-if [ "$interface" != "ppp0" ]; then
-    exit 0
-fi
-
-log_msg "Wan event detected: interface=$interface address=$address"
-
-
-# Если уже запущена длинная пауза после достижения лимита
-if [ -f "$counter" ] && [ "$(cat "$counter" 2>/dev/null)" = "PAUSE" ]; then
-    log_msg "Режим ожидания активен"
-    exit 0
-fi
-
-
-# Проверка CGNAT
-is_gray_ip() {
-    echo "$1" | grep -qE \
-    "^(10\.|100\.6[4-9]\.|100\.[7-9][0-9]\.|100\.1[01][0-9]\.|100\.12[0-7]\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[01]\.)"
-}
-
-
-# Реконнект PPPoE
-soft_reconnect() {
-delay="$1"
-
-    (
-        mkdir "$lock" 2>/dev/null || {
-            log_msg "Реконнект уже выполняется"
-            exit 0
-        }
-
-        trap 'rmdir "$lock" 2>/dev/null' EXIT
-
-        log_msg "Запланирован реконнект через ${delay}с"
-
-        sleep "$delay"
-
-        # Если это была длинная пауза — разрешаем новые попытки
-        if [ "$delay" -eq "$long_pause" ]; then
-            printf '0\n' > "$counter"
-            log_msg "Режим ожидания завершён"
+    if [ "$log_size" -gt "$max_log_size" ]; then
+        if tail -n 75 "$log" > "${log}.tmp" && mv "${log}.tmp" "$log"; then
+            log_msg "[SYS] Log rotated"
         fi
-
-        log_msg "Wan down ($wan_interface)"
-
-        if ifconfig "$wan_interface" down; then
-            log_msg "down OK"
-        else
-            log_msg "down FAILED"
-            exit 1
-        fi
-
-        sleep 2
-
-        log_msg "Wan up ($wan_interface)"
-
-        if ifconfig "$wan_interface" up; then
-            log_msg "up OK"
-        else
-            log_msg "up FAILED"
-            exit 1
-        fi
-
-        log_msg "Реконнект завершён"
-    ) &
-
-}
-
-
-# Обработка серого IP
-if is_gray_ip "$address"; then
-
-    [ -f "$counter" ] || printf '0\n' > "$counter"
-
-    try_nr=$(cat "$counter" 2>/dev/null)
-    [ -n "$try_nr" ] || try_nr=0
-
-    try_nr=$((try_nr + 1))
-
-    log_msg "Обнаружен CGNAT IP: $address"
-    log_msg "Попытка $try_nr из $max_tries"
-
-    if [ "$try_nr" -ge "$max_tries" ]; then
-        log_msg "Достигнут лимит попыток. Ожидание ${long_pause}с"
-
-        printf 'PAUSE\n' > "$counter"
-
-        soft_reconnect "$long_pause"
-        exit 0
     fi
+}
 
-    printf '%s\n' "$try_nr" > "$counter"
+# --------------------------------------------------
+# Фильтрация событий NDMS (только ppp0)
+# --------------------------------------------------
+[ -n "$address" ] || exit 0
+[ "$interface" = "ppp0" ] || exit 0
 
-    # Случайная задержка 5-15 секунд
-    delay=$(( ($(date +%s) % 11) + 5 ))
-    soft_reconnect "$delay"
+is_gray_ip() {
+    printf '%s\n' "$1" | grep -qE \
+    '^(10\.|100\.6[4-9]\.|100\.[7-9][0-9]\.|100\.1[01][0-9]\.|100\.12[0-7]\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[01]\.|192\.168\.)'
+}
+
+if is_gray_ip "$address"; then
+    current_state="GRAY:$address"
+else
+    current_state="WHITE:$address"
+fi
+
+old_state=$(cat "$state_file" 2>/dev/null)
+
+# --------------------------------------------------
+# Обработка WHITE IP
+# --------------------------------------------------
+if ! is_gray_ip "$address"; then
+    [ "$old_state" = "$current_state" ] && exit 0
+
+    rotate_log
+    printf '%s\n' "$current_state" > "$state_file"
+    log_msg "УСПЕХ: Получен белый IP $address (было: ${old_state:-INIT})"
 
     exit 0
 fi
 
+# --------------------------------------------------
+# Обработка CGNAT (GRAY IP)
+# --------------------------------------------------
+case "$old_state" in
+    RUNNING_GRAY:*)
+        exit 0
+        ;;
+esac
 
-# Обработка белого IP
-log_msg "Получен белый IP: $address"
+rotate_log
+printf '%s\n' "RUNNING_$current_state" > "$state_file"
+log_msg "ВНИМАНИЕ: Обнаружен CGNAT IP ($address). Запуск цикла реконнектов..."
 
-printf '0\n' > "$counter"
+# --------------------------------------------------
+# Фоновый цикл (дергает eth3 через ifconfig)
+# --------------------------------------------------
+(
+    try_nr=1
 
-[ -f "$previp" ] || printf '0.0.0.0\n' > "$previp"
+    while :; do
+        state_now=$(cat "$state_file" 2>/dev/null)
 
-old_ip=$(cat "$previp" 2>/dev/null)
+        case "$state_now" in
+            RUNNING_GRAY:*) ;;
+            *) exit 0 ;;
+        esac
 
-if [ "$old_ip" != "$address" ]; then
-    printf '%s\n' "$address" > "$previp"
-    log_msg "IP изменился: $old_ip -> $address"
+        # Задержка перед реконнектом
+        if [ "$try_nr" -eq "$max_tries" ]; then
+            log_msg "Лимит попыток ($max_tries) исчерпан. Ожидание ${long_pause}с перед новым кругом..."
+            sleep "$long_pause"
+        else
+            delay=$(( ($(date +%s) % 11) + 5 ))
+            sleep "$delay"
+        fi
 
-fi
+        # Проверка состояния перед сбросом
+        state_now=$(cat "$state_file" 2>/dev/null)
+        case "$state_now" in
+            RUNNING_GRAY:*) ;;
+            *) exit 0 ;;
+        esac
+
+        # Реконнект через ifconfig eth3
+        ifconfig "$wan_interface" down >/dev/null 2>&1
+        sleep 2
+        ifconfig "$wan_interface" up >/dev/null 2>&1
+
+        # Счётчик попыток
+        if [ "$try_nr" -eq "$max_tries" ]; then
+            try_nr=1
+        else
+            try_nr=$((try_nr + 1))
+        fi
+    done
+) &
 
 exit 0
